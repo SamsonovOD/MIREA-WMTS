@@ -1,0 +1,116 @@
+#include "xml.h"
+
+static QStringList textElements = {
+    "Identifier",
+    "ScaleDenominator",
+    "TopLeftCorner",
+    "TileWidth",
+    "TileHeight",
+    "MatrixWidth",
+    "MatrixHeight",
+    "LowerCorner",
+    "UpperCorner",
+    "SupportedCRS"
+};
+
+XMLElement::XMLElement(QXmlStreamReader* reader){
+    name = reader->name().toString();
+    attributes = reader->attributes();
+}
+
+XMLElement::~XMLElement() {
+    qDebug() << "~xmlElement " << name;
+    for(auto i = sub_elements.begin(); i != sub_elements.end(); ++i) {
+        delete i.value();
+    }
+    for(auto i = siblings.begin(); i != siblings.end(); ++i) {
+        if(*i != this)
+            delete *i;
+    }
+}
+
+QString XMLElement::getSubText(QString name) {
+    if(!sub_elements.contains(name)){
+        for(auto i = sub_elements.begin(); i != sub_elements.end(); ++i) {
+            qDebug() << i.key();
+        }
+    }
+    return sub_elements[name]->text;
+}
+
+XMLProcessor::XMLProcessor(QByteArray data){
+    this->data = data;
+    this->reader = nullptr;
+    root = nullptr;
+    scanAll();
+}
+
+XMLElement* XMLProcessor::getElementByPath(QStringList& path, XMLElement* curr_element){
+    if(!curr_element){
+        curr_element = root;
+    }
+    QString name = path.front();
+    path.pop_front();
+    if(curr_element->sub_elements.contains(name)){
+        curr_element = curr_element->sub_elements[name];
+        if(!path.size()){
+            return curr_element;
+        }
+        return getElementByPath(path, curr_element);
+    }
+    XmlException e;
+    e.raise();
+    return nullptr;
+}
+
+void XMLProcessor::scanAll(){
+    if(reader){
+        delete reader;
+    }
+    for(auto i = stack.begin(); i != stack.end(); ++i) {
+        delete *i;
+    }
+    if(root){
+        delete root;
+    }
+    reader = new QXmlStreamReader(data);
+    reader->readNext();
+    if(reader->documentEncoding().size() == 0) {
+        XmlException e;
+        e.raise();
+    }
+    XMLElement* curr_element = nullptr;
+    root = new XMLElement(reader);
+    stack.append(root);
+    while(! reader->atEnd()) {
+        if(reader->isStartElement()) {
+            QString name = reader->name().toString();
+            curr_element = new XMLElement(reader);
+            if(!root){
+                root = curr_element;
+            }
+            else {
+                auto last_element = stack.back();
+                if(last_element->sub_elements.contains(name)) {
+                    auto existing = last_element->sub_elements[name];
+                    if(!existing->siblings.size()){
+                        existing->siblings.append(existing);
+                    }
+                    existing->siblings.append(curr_element);
+                } else {
+                    last_element->sub_elements[name] = curr_element;
+                }
+            }
+            stack.append(curr_element);
+            if(textElements.contains(name)) {
+                curr_element->text = reader->readElementText();
+                stack.pop_back();
+                curr_element = stack.back();
+            }
+        } else if(reader->isEndElement()) {
+            stack.pop_back();
+            curr_element = stack.back();
+        }
+        reader->readNext();
+    }
+}
